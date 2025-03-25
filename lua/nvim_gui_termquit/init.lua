@@ -29,7 +29,6 @@ function M.setup(opts)
   -- Set up command-line abbreviations with safeguards so they only trigger in : commands.
   vim.cmd([[
     cnoreabbrev <expr> q   getcmdtype() == ":" && getcmdline() == "q"   ? "Q"   : "q"
-    cnoreabbrev <expr> w   getcmdtype() == ":" && getcmdline() == "w"   ? "W"   : "w"
     cnoreabbrev <expr> wq  getcmdtype() == ":" && getcmdline() == "wq"  ? "WQ"  : "wq"
     cnoreabbrev <expr> Wq  getcmdtype() == ":" && getcmdline() == "Wq"  ? "WQ"  : "Wq"
     cnoreabbrev <expr> qa  getcmdtype() == ":" && getcmdline() == "qa"  ? "QA"  : "qa"
@@ -37,10 +36,9 @@ function M.setup(opts)
   ]])
 
   -- Define commands that call our Lua safe_quit function.
-  vim.cmd("command! Q   lua require('nvide_safequit').safe_quit('q')")
-  vim.cmd("command! WQ  lua require('nvide_safequit').safe_quit('wq')")
-  vim.cmd("command! QA  lua require('nvide_safequit').safe_quit('qa')")
-  vim.cmd("command! W   w") -- For writing the file.
+  vim.cmd("command! Q   lua require('nvim_gui_termquit').safe_quit('q')")
+  vim.cmd("command! WQ  lua require('nvim_gui_termquit').safe_quit('wq')")
+  vim.cmd("command! QA  lua require('nvim_gui_termquit').safe_quit('qa')")
 end
 
 --- Checks for the marked terminal. If found, switches to it instead of quitting.
