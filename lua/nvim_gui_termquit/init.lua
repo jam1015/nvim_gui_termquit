@@ -92,7 +92,7 @@ local function delete_unmarked()
         end
       end
       if not is_marked then
-        vim.cmd("Bdelete " .. bufnr)
+        require('bufdelete').bufdelete(bufnr)
       end
     end
   end
