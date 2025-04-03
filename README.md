@@ -21,6 +21,11 @@ active.
 -   **Lua Module:** Packaged as a Lua module for easy integration and
     potential packaging as a plugin.
 
+# Note
+
+This relies on a [zsh hook in my personal config](https://github.com/jam1015/dotfiles/blob/master/.zshrc_personal#L154C1-L167C2) that sets the file `/.local/state/zsh/whereami` to contain the path to the last directory I switched to. 
+
+
 ## Installation
 
 
