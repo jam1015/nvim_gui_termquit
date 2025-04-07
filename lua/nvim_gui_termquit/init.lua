@@ -1,6 +1,5 @@
 local M = {}
 
---- Sets up the Neovide safe quit functionality and startup terminal.
 function M.setup(opts)
   opts = opts or {}
 
@@ -12,7 +11,7 @@ function M.setup(opts)
       local lines = vim.fn.readfile(file_path)
       if lines and #lines > 0 then
         local new_dir = lines[1]
-        vim.cmd("cd " .. new_dir)
+        vim.api.nvim_set_current_dir(new_dir)
       end
       vim.cmd("terminal")
       --vim.cmd("norm a") -- Enter insert mode in the terminal.
@@ -22,6 +21,7 @@ function M.setup(opts)
   end
 
   local gui = vim.api.nvim_create_augroup("gui_terminal", { clear = true })
+
   vim.api.nvim_create_autocmd("VimEnter", {
     callback = call_terminal,
     group = gui,
@@ -75,7 +75,11 @@ local function write_modded_buffers()
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype ~= 'terminal' then
       if vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
-        vim.cmd("execute 'buffer " .. bufnr .. "' | silent! write")
+        vim.api.nvim_set_current_buf(bufnr)
+        local success, err = pcall(vim.cmd, "write")
+        if not success then
+          print("Error during write: " .. err)
+        end
       end
     end
   end
@@ -99,16 +103,44 @@ local function delete_unmarked()
 end
 
 
+local function only_window()
+  -- Step 1: Close all other tabs
+  local current_tab = vim.api.nvim_get_current_tabpage()
+  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    if tab ~= current_tab then
+      vim.api.nvim_tabpage_close(tab, true)
+    end
+  end
+
+  -- Step 2: Close all other windows in the current tab
+  local current_win = vim.api.nvim_get_current_win()
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(current_tab)) do
+    if win ~= current_win then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+end
 local function switch_to_main()
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype == 'terminal' then
       local ok, is_marked = pcall(vim.api.nvim_buf_get_var, bufnr, "is_main_terminal")
       if ok and is_marked then
-        vim.cmd("buffer " .. bufnr)
+        vim.api.nvim_set_current_buf(bufnr)
         return
       end
     end
   end
+end
+
+
+local function has_multiple_windows()
+  local wins = vim.api.nvim_tabpage_list_wins(0) -- 0 = current tabpage
+  return #wins > 1
+end
+
+local function has_multiple_tabs()
+  local tabs = vim.api.nvim_list_tabpages()
+  return #tabs > 1
 end
 
 
@@ -123,35 +155,59 @@ end
 function M.safe_quit(cmd, bang)
   local marked_buffers = find_marked_term()
   if cmd == 'wqa' then
-    -- find length of marked buffers
     if #marked_buffers > 0 then
-      -- Attempt to write all non-terminal buffers if they are modified.
       write_modded_buffers()
-
-      -- Call :Bdelete on every buffer except for the marked terminal(s).
       delete_unmarked()
-      return
+      switch_to_main()
+      only_window()
     else
-      local command = "wqa"
+      local command = cmd
       if bang then command = command .. "!" end
       vim.cmd(command)
-      return
     end
+    return
   end
-
 
   if cmd == 'qa' then
     if #marked_buffers > 0 then
       delete_unmarked()
+      switch_to_main()
+      only_window()
       return
     else
-      local command = "qa"
+      local command = cmd
       if bang then command = command .. "!" end
       vim.cmd(command)
       return
     end
-  else
-    switch_to_main()
+    return
+  end
+
+  if cmd == 'wq' then
+    -- find length of marked buffers
+    if #marked_buffers > 0 and not has_multiple_tabs() and not has_multiple_windows() then
+      write_modded_buffers()
+      delete_unmarked()
+      switch_to_main()
+    else
+      local command = cmd
+      if bang then command = command .. "!" end
+      vim.cmd(command)
+    end
+    return
+  end
+
+  if cmd == 'q' then
+    -- find length of marked buffers
+    if #marked_buffers > 0 and not has_multiple_tabs() and not has_multiple_windows() then
+      delete_unmarked()
+      switch_to_main()
+    else
+      local command = cmd
+      if bang then command = command .. "!" end
+      vim.cmd(command)
+    end
+    return
   end
 
   local command = cmd
