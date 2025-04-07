@@ -1,6 +1,7 @@
 local M = {}
 
 function M.setup(opts)
+  vim.cmd([[echomsg "lala"]])
   opts = opts or {}
 
   -- Create the startup terminal when no files are passed.
@@ -103,6 +104,31 @@ local function delete_unmarked()
 end
 
 
+
+local function delete_unmarked_native(bang)
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(bufnr) then
+      local is_marked = false
+      if vim.bo[bufnr].buftype == 'terminal' then
+        local ok, marked = pcall(vim.api.nvim_buf_get_var, bufnr, "is_main_terminal")
+        if ok and marked then
+          is_marked = true
+        end
+      end
+      if not is_marked then
+        local success, err = pcall(vim.api.nvim_buf_delete, bufnr, { force = bang })
+        if not success then
+            print(err)
+            vim.api.nvim_set_current_buf(bufnr)
+            return false
+        end
+      end
+    end
+  end
+  return true
+end
+
+
 local function only_window()
   -- Step 1: Close all other tabs
   local current_tab = vim.api.nvim_get_current_tabpage()
@@ -187,7 +213,7 @@ function M.safe_quit(cmd, bang)
     -- find length of marked buffers
     if #marked_buffers > 0 and not has_multiple_tabs() and not has_multiple_windows() then
       write_modded_buffers()
-      delete_unmarked()
+      delete_unmarked_native(bang)
       switch_to_main()
     else
       local command = cmd
@@ -200,8 +226,9 @@ function M.safe_quit(cmd, bang)
   if cmd == 'q' then
     -- find length of marked buffers
     if #marked_buffers > 0 and not has_multiple_tabs() and not has_multiple_windows() then
-      delete_unmarked()
+      if delete_unmarked_native(bang) then
       switch_to_main()
+      end
     else
       local command = cmd
       if bang then command = command .. "!" end
