@@ -1,7 +1,6 @@
 local M = {}
 
 function M.setup(opts)
-  vim.cmd([[echomsg "lala"]])
   opts = opts or {}
 
   -- Create the startup terminal when no files are passed.
@@ -72,55 +71,67 @@ local function find_marked_term()
   return marked_buffers
 end
 
-local function write_modded_buffers()
+local function safe_set_buf(bufnr)
+  local ok, err = pcall(vim.api.nvim_set_current_buf, bufnr)
+  if not ok then
+    vim.notify(err, vim.log.levels.WARN)
+  end
+end
+
+local function write_modded_buffers(bang)
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype ~= 'terminal' then
       if vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
-        vim.api.nvim_set_current_buf(bufnr)
-        local success, err = pcall(vim.cmd, "write")
+        safe_set_buf(bufnr)
+        local command = ""
+        if bang then
+          command = "write!"
+        else
+          command = "write"
+        end
+        local success, err = pcall(vim.cmd, command)
         if not success then
-          print("Error during write: " .. err)
+          vim.notify(err, vim.log.levels.WARN)
+          return false
         end
       end
+    else
+      return false
     end
   end
-end
-
-local function delete_unmarked()
-  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(bufnr) then
-      local is_marked = false
-      if vim.bo[bufnr].buftype == 'terminal' then
-        local ok, marked = pcall(vim.api.nvim_buf_get_var, bufnr, "is_main_terminal")
-        if ok and marked then
-          is_marked = true
-        end
-      end
-      if not is_marked then
-        require('bufdelete').bufdelete(bufnr)
-      end
-    end
-  end
+  return true
 end
 
 
+local function check_term_marked(bufnr)
+  local is_marked = false
+  if vim.bo[bufnr].buftype == 'terminal' then
+    local ok, marked = pcall(vim.api.nvim_buf_get_var, bufnr, "is_main_terminal")
+    if ok and marked then
+      is_marked = true
+    end
+  end
+  return is_marked
+end
 
-local function delete_unmarked_native(bang)
+local function delete_unmarked_native(bang, all)
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) then
-      local is_marked = false
-      if vim.bo[bufnr].buftype == 'terminal' then
-        local ok, marked = pcall(vim.api.nvim_buf_get_var, bufnr, "is_main_terminal")
-        if ok and marked then
-          is_marked = true
-        end
-      end
-      if not is_marked then
+      safe_set_buf(bufnr)
+      if not check_term_marked(bufnr) then
         local success, err = pcall(vim.api.nvim_buf_delete, bufnr, { force = bang })
         if not success then
-            print(err)
-            vim.api.nvim_set_current_buf(bufnr)
-            return false
+          vim.notify(err, vim.log.levels.WARN)
+          return false
+        end
+      end
+    else
+      if not check_term_marked(bufnr) then
+        safe_set_buf(bufnr)
+        if all then
+          local success, err = pcall(vim.api.nvim_buf_delete, bufnr, { force = bang })
+        else
+          return false
         end
       end
     end
@@ -182,10 +193,9 @@ function M.safe_quit(cmd, bang)
   local marked_buffers = find_marked_term()
   if cmd == 'wqa' then
     if #marked_buffers > 0 then
-      write_modded_buffers()
-      delete_unmarked()
-      switch_to_main()
-      only_window()
+      if write_modded_buffers(bang) and delete_unmarked_native(bang, true) then
+        only_window()
+      end
     else
       local command = cmd
       if bang then command = command .. "!" end
@@ -196,10 +206,10 @@ function M.safe_quit(cmd, bang)
 
   if cmd == 'qa' then
     if #marked_buffers > 0 then
-      delete_unmarked()
-      switch_to_main()
-      only_window()
-      return
+      if delete_unmarked_native(bang, true) then
+        only_window()
+        return
+      end
     else
       local command = cmd
       if bang then command = command .. "!" end
@@ -212,13 +222,16 @@ function M.safe_quit(cmd, bang)
   if cmd == 'wq' then
     -- find length of marked buffers
     if #marked_buffers > 0 and not has_multiple_tabs() and not has_multiple_windows() then
-      write_modded_buffers()
-      delete_unmarked_native(bang)
+      write_modded_buffers(bang)
+      delete_unmarked_native(bang, false)
       switch_to_main()
     else
       local command = cmd
       if bang then command = command .. "!" end
-      vim.cmd(command)
+      local success, err = pcall(vim.cmd, command)
+      if not success then
+        vim.notify(err, vim.log.levels.WARN)
+      end
     end
     return
   end
@@ -226,9 +239,7 @@ function M.safe_quit(cmd, bang)
   if cmd == 'q' then
     -- find length of marked buffers
     if #marked_buffers > 0 and not has_multiple_tabs() and not has_multiple_windows() then
-      if delete_unmarked_native(bang) then
-      switch_to_main()
-      end
+      delete_unmarked_native(bang, false)
     else
       local command = cmd
       if bang then command = command .. "!" end
@@ -236,12 +247,6 @@ function M.safe_quit(cmd, bang)
     end
     return
   end
-
-  local command = cmd
-  if bang then
-    command = command .. "!"
-  end
-  vim.cmd(command)
 end
 
 return M
