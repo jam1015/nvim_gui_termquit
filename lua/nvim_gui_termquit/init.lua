@@ -1,34 +1,47 @@
+--- Neovim GUI Terminal and Quit Management Module
+--- This module sets up a custom terminal behavior in Neovim and redefines quit commands
+--- to safeguard a designated "main terminal" buffer. It provides functionality to:
+---   - Automatically open a terminal if Neovim starts without file arguments.
+---   - Switch the current directory based on an external file (configured in your shell).
+---   - Intercept and override default commands like :q, :wq, :qa, and :wqa with custom logic.
 local M = {}
 
+--- Sets up the module.
+--- This function registers autocommands for starting a terminal on startup,
+--- defines command-line abbreviations for quit commands, and creates custom user commands.
+--- @param opts table|nil Optional configuration table.
 function M.setup(opts)
   opts = opts or {}
 
-  -- Create the startup terminal when no files are passed.
+  --- Creates and opens a startup terminal if Neovim was launched without any file arguments.
+  --- It reads the directory from a file (set in your shell configuration) and opens a terminal buffer.
   local function call_terminal()
     if #vim.fn.argv() == 0 then
-      -- this is set in my zshrc
+      -- Expand path to the "whereami" file (this file is set in your zshrc)
       local file_path = vim.fn.expand("~/.local/state/zsh/whereami")
       local lines = vim.fn.readfile(file_path)
       if lines and #lines > 0 then
         local new_dir = lines[1]
         vim.api.nvim_set_current_dir(new_dir)
       end
+      -- Disable list mode locally and open a terminal buffer
       vim.opt_local.list = false
       vim.cmd("terminal")
       vim.cmd("norm a") -- Enter insert mode in the terminal.
       local term_buf = vim.api.nvim_get_current_buf()
+      -- Mark this terminal as the main terminal for later reference.
       vim.api.nvim_buf_set_var(term_buf, "is_main_terminal", true)
     end
   end
 
+  -- Create an augroup for the GUI terminal autocommand and register the VimEnter event.
   local gui = vim.api.nvim_create_augroup("gui_terminal", { clear = true })
-
   vim.api.nvim_create_autocmd("VimEnter", {
     callback = call_terminal,
     group = gui,
   })
 
-  -- Set up command-line abbreviations with safeguards so they only trigger in : commands.
+  -- Set up command-line abbreviations to override default quit commands.
   vim.cmd([[
     cnoreabbrev <expr> q   getcmdtype() == ":" && getcmdline() == "q"   ? "Q"   : "q"
     cnoreabbrev <expr> wq  getcmdtype() == ":" && getcmdline() == "wq"  ? "WQ"  : "wq"
@@ -40,8 +53,7 @@ function M.setup(opts)
     cnoreabbrev <expr> wqa getcmdtype() == ":" && getcmdline() == "WQa" ? "WQA" : "wqa"
   ]])
 
-
-  -- Define commands using native Lua with the bang (!) flag.
+  -- Create custom user commands that utilize our safe_quit functionality.
   vim.api.nvim_create_user_command('Q', function(opts_in)
     require('nvim_gui_termquit').safe_quit('q', opts_in.bang)
   end, { bang = true })
@@ -59,6 +71,8 @@ function M.setup(opts)
   end, { bang = true })
 end
 
+--- Finds all terminal buffers that are marked as the main terminal.
+--- @return table List of buffer numbers that are considered the main terminal.
 local function find_marked_term()
   local marked_buffers = {}
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
@@ -72,6 +86,9 @@ local function find_marked_term()
   return marked_buffers
 end
 
+--- Safely sets the current buffer.
+--- If an error occurs, it notifies the user.
+--- @param bufnr number The buffer number to switch to.
 local function safe_set_buf(bufnr)
   local ok, err = pcall(vim.api.nvim_set_current_buf, bufnr)
   if not ok then
@@ -79,17 +96,15 @@ local function safe_set_buf(bufnr)
   end
 end
 
+--- Writes all modified (non-terminal) buffers.
+--- @param bang boolean Whether to use a forced write command ("write!") instead of "write".
+--- @return boolean True if all buffers were written successfully; false otherwise.
 local function write_modded_buffers(bang)
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype ~= 'terminal' then
       if vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
         safe_set_buf(bufnr)
-        local command = ""
-        if bang then
-          command = "write!"
-        else
-          command = "write"
-        end
+        local command = bang and "write!" or "write"
         local success, err = pcall(vim.cmd, command)
         if not success then
           vim.notify(err, vim.log.levels.WARN)
@@ -103,7 +118,9 @@ local function write_modded_buffers(bang)
   return true
 end
 
-
+--- Checks if a given buffer is a terminal and marked as the main terminal.
+--- @param bufnr number The buffer number to check.
+--- @return boolean True if the buffer is a terminal and is marked; false otherwise.
 local function check_term_marked(bufnr)
   local is_marked = false
   if vim.bo[bufnr].buftype == 'terminal' then
@@ -115,6 +132,10 @@ local function check_term_marked(bufnr)
   return is_marked
 end
 
+--- Deletes buffers that are not marked as the main terminal.
+--- @param bang boolean Whether to force deletion (using force option).
+--- @param all boolean If true, even buffers not loaded are considered for deletion.
+--- @return boolean True if deletion was successful for all applicable buffers; false otherwise.
 local function delete_unmarked_native(bang, all)
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) then
@@ -140,9 +161,10 @@ local function delete_unmarked_native(bang, all)
   return true
 end
 
-
+--- Closes all tabs except the current one and all windows except the current window.
+--- This function ensures that only one window remains after deletions.
 local function only_window()
-  -- Step 1: Close all other tabs
+  -- Step 1: Close all other tabs.
   local current_tab = vim.api.nvim_get_current_tabpage()
   for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
     if tab ~= current_tab then
@@ -150,7 +172,7 @@ local function only_window()
     end
   end
 
-  -- Step 2: Close all other windows in the current tab
+  -- Step 2: Close all other windows in the current tab.
   local current_win = vim.api.nvim_get_current_win()
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(current_tab)) do
     if win ~= current_win then
@@ -158,6 +180,9 @@ local function only_window()
     end
   end
 end
+
+--- Switches focus to the main terminal buffer.
+--- It finds the first terminal buffer marked as the main terminal and sets it as current.
 local function switch_to_main()
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype == 'terminal' then
@@ -170,26 +195,29 @@ local function switch_to_main()
   end
 end
 
-
+--- Checks if multiple windows are open in the current tab.
+--- @return boolean True if more than one window is open; false otherwise.
 local function has_multiple_windows()
   local wins = vim.api.nvim_tabpage_list_wins(0) -- 0 = current tabpage
   return #wins > 1
 end
 
+--- Checks if multiple tabs are open.
+--- @return boolean True if more than one tab is open; false otherwise.
 local function has_multiple_tabs()
   local tabs = vim.api.nvim_list_tabpages()
   return #tabs > 1
 end
 
-
---- Checks for the marked terminal.
---- For 'wqa': if found, writes all non-terminal buffers (if modified) and then calls :Bdelete on every
---- buffer except the marked terminal(s). If no marked terminal is found, proceeds with :wqa.
---- For 'qa': if a marked terminal is found, calls :Bdelete on every buffer except the marked terminal.
---- For other commands: if a marked terminal is found, switches to it instead of quitting.
---- Otherwise, executes the requested quit command.
----@param cmd string: 'q', 'wq', 'qa', or 'wqa'
----@param bang boolean: whether the command was called with a bang (!)
+--- Safely quits buffers based on the requested command and optional bang flag.
+--- The behavior varies depending on the command:
+---   - 'wqa': Writes all modified non-terminal buffers and deletes unmarked buffers if a main terminal is found.
+---   - 'qa': Deletes unmarked buffers without writing modifications if a main terminal is found.
+---   - 'wq': Writes modifications and deletes unmarked buffers only if a single window/tab with a main terminal exists.
+---   - 'q': Quits the current buffer or deletes unmarked buffers based on context.
+---
+--- @param cmd string The quit command ('q', 'wq', 'qa', or 'wqa').
+--- @param bang boolean Whether the command was invoked with a bang (!) to force actions.
 function M.safe_quit(cmd, bang)
   local marked_buffers = find_marked_term()
   if cmd == 'wqa' then
@@ -221,7 +249,8 @@ function M.safe_quit(cmd, bang)
   end
 
   if cmd == 'wq' then
-    -- find length of marked buffers
+    -- If a main terminal exists and there's a single tab and window,
+    -- write modified buffers, delete unmarked buffers, and switch to the main terminal.
     if #marked_buffers > 0 and not has_multiple_tabs() and not has_multiple_windows() then
       write_modded_buffers(bang)
       delete_unmarked_native(bang, false)
@@ -238,7 +267,6 @@ function M.safe_quit(cmd, bang)
   end
 
   if cmd == 'q' then
-    -- find length of marked buffers
     if #marked_buffers > 0 and not has_multiple_tabs() and not has_multiple_windows() then
       delete_unmarked_native(bang, false)
     else
