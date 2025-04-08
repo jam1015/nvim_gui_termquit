@@ -13,8 +13,9 @@ function M.setup(opts)
         local new_dir = lines[1]
         vim.api.nvim_set_current_dir(new_dir)
       end
+      vim.opt_local.list = false
       vim.cmd("terminal")
-      --vim.cmd("norm a") -- Enter insert mode in the terminal.
+      vim.cmd("norm a") -- Enter insert mode in the terminal.
       local term_buf = vim.api.nvim_get_current_buf()
       vim.api.nvim_buf_set_var(term_buf, "is_main_terminal", true)
     end
