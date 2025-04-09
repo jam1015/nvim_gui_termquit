@@ -4,13 +4,26 @@
 ---   - Automatically open a terminal if Neovim starts without file arguments.
 ---   - Switch the current directory based on an external file (configured in your shell).
 ---   - Intercept and override default commands like :q, :wq, :qa, and :wqa with custom logic.
+---   - Jump to the marked terminal via a new command and mapping.
 local M = {}
 
 --- Sets up the module.
 --- This function registers autocommands for starting a terminal on startup,
---- defines command-line abbreviations for quit commands, and creates custom user commands.
+--- defines command-line abbreviations for quit commands, and creates custom user commands,
+--- including the :Terminal command and a plug mapping.
 --- @param opts table|nil Optional configuration table.
 function M.setup(opts)
+
+
+
+
+
+
+
+
+
+
+
   opts = opts or {}
 
   --- Creates and opens a startup terminal if Neovim was launched without any file arguments.
@@ -27,6 +40,8 @@ function M.setup(opts)
       -- Disable list mode locally and open a terminal buffer
       vim.opt_local.list = false
       vim.cmd("terminal")
+      vim.cmd("set nonumber")
+      vim.cmd("set norelativenumber")
       vim.cmd("norm a") -- Enter insert mode in the terminal.
       local term_buf = vim.api.nvim_get_current_buf()
       -- Mark this terminal as the main terminal for later reference.
@@ -69,6 +84,15 @@ function M.setup(opts)
   vim.api.nvim_create_user_command('WQA', function(opts_in)
     require('nvim_gui_termquit').safe_quit('wqa', opts_in.bang)
   end, { bang = true })
+
+  --- Create a new command :Terminal that jumps to the main terminal,
+  --- entering terminal (insert) mode.
+  vim.api.nvim_create_user_command('Terminal', function()
+    M.goto_terminal()
+  end, { desc = "Switch to the marked terminal and enter terminal mode" })
+
+  --- Define a plug mapping (<Plug>GotoTerminal) that calls the Lua function to go to the terminal.
+  vim.api.nvim_set_keymap('n', '<Plug>GotoTerminal', ':Terminal<CR>', { noremap = true, silent = true })
 end
 
 --- Finds all terminal buffers that are marked as the main terminal.
@@ -276,6 +300,23 @@ function M.safe_quit(cmd, bang)
     end
     return
   end
+end
+
+--- Switches to the marked terminal and enters terminal (insert) mode.
+--- If a marked terminal is found, it sets that buffer as current and sends 'norm a'.
+--- Otherwise, a warning is issued.
+function M.goto_terminal()
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype == 'terminal' then
+      local ok, is_marked = pcall(vim.api.nvim_buf_get_var, bufnr, "is_main_terminal")
+      if ok and is_marked then
+        vim.api.nvim_set_current_buf(bufnr)
+        vim.cmd("norm a")  -- Enter terminal (insert) mode.
+        return
+      end
+    end
+  end
+  vim.notify("No marked terminal found", vim.log.levels.WARN)
 end
 
 return M
