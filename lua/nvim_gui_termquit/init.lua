@@ -13,17 +13,6 @@ local M = {}
 --- including the :Terminal command and a plug mapping.
 --- @param opts table|nil Optional configuration table.
 function M.setup(opts)
-
-
-
-
-
-
-
-
-
-
-
   opts = opts or {}
 
   --- Creates and opens a startup terminal if Neovim was launched without any file arguments.
@@ -40,8 +29,8 @@ function M.setup(opts)
       -- Disable list mode locally and open a terminal buffer
       vim.opt_local.list = false
       vim.cmd("terminal")
-      vim.cmd("set nonumber")
-      vim.cmd("set norelativenumber")
+      vim.opt_local.number = false
+      vim.opt_local.relativenumber = false
       vim.cmd("norm a") -- Enter insert mode in the terminal.
       local term_buf = vim.api.nvim_get_current_buf()
       -- Mark this terminal as the main terminal for later reference.
@@ -92,7 +81,8 @@ function M.setup(opts)
   end, { desc = "Switch to the marked terminal and enter terminal mode" })
 
   --- Define a plug mapping (<Plug>GotoTerminal) that calls the Lua function to go to the terminal.
-  vim.api.nvim_set_keymap('n', '<Plug>GotoTerminal', ':Terminal<CR>', { noremap = true, silent = true })
+  vim.api.nvim_set_keymap('n', '<Plug>GotoTerminal', '<cmd>lua require("nvim_gui_termquit").goto_terminal()<CR>',
+    { noremap = true, silent = true })
 end
 
 --- Finds all terminal buffers that are marked as the main terminal.
@@ -302,21 +292,51 @@ function M.safe_quit(cmd, bang)
   end
 end
 
---- Switches to the marked terminal and enters terminal (insert) mode.
---- If a marked terminal is found, it sets that buffer as current and sends 'norm a'.
---- Otherwise, a warning is issued.
+--- Switches to the marked terminal or returns to the origin buffer.
+---
+--- When called from a non-terminal buffer, this function:
+---   1. Uses the helper function `find_marked_term()` to locate the main terminal buffer.
+---   2. Records the current buffer as the "origin_buffer" in the marked terminal.
+---   3. Switches to the marked terminal and enters terminal (insert) mode.
+---
+--- When called from within the marked terminal, it attempts to:
+---   1. Retrieve the recorded "origin_buffer".
+---   2. Switch back to that origin buffer if it exists and is loaded.
+---   3. Otherwise, it notifies the user that no valid origin buffer is available.
+---
+--- @return nil
 function M.goto_terminal()
-  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype == 'terminal' then
-      local ok, is_marked = pcall(vim.api.nvim_buf_get_var, bufnr, "is_main_terminal")
-      if ok and is_marked then
-        vim.api.nvim_set_current_buf(bufnr)
-        vim.cmd("norm a")  -- Enter terminal (insert) mode.
-        return
-      end
+  local cur_buf = vim.api.nvim_get_current_buf()
+  local is_cur_marked = false
+
+  -- Check if the current buffer is a terminal and marked as the main terminal.
+  if vim.bo[cur_buf].buftype == 'terminal' then
+    local ok, is_main = pcall(vim.api.nvim_buf_get_var, cur_buf, "is_main_terminal")
+    if ok and is_main then
+      is_cur_marked = true
     end
   end
-  vim.notify("No marked terminal found", vim.log.levels.WARN)
+
+  if is_cur_marked then
+    -- If we're already in the marked terminal, try to jump back to the origin.
+    local ok, origin_buf = pcall(vim.api.nvim_buf_get_var, cur_buf, "origin_buffer")
+    if ok and origin_buf and vim.api.nvim_buf_is_loaded(origin_buf) then
+      vim.api.nvim_set_current_buf(origin_buf)
+    else
+      vim.notify("No origin buffer recorded or it is no longer available.", vim.log.levels.WARN)
+    end
+  else
+    -- Use the provided helper function to find the marked terminal(s).
+    local marked_buffers = find_marked_term()
+    if #marked_buffers > 0 then
+      local main_term_buf = marked_buffers[1]
+      -- Record the current (origin) buffer in the terminal buffer.
+      vim.api.nvim_buf_set_var(main_term_buf, "origin_buffer", cur_buf)
+      vim.api.nvim_set_current_buf(main_term_buf)
+    else
+      vim.notify("No marked terminal found", vim.log.levels.WARN)
+    end
+  end
 end
 
 return M
