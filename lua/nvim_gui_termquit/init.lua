@@ -17,24 +17,56 @@ function M.setup(opts)
 
   --- Creates and opens a startup terminal if Neovim was launched without any file arguments.
   --- It reads the directory from a file (set in your shell configuration) and opens a terminal buffer.
-  local function call_terminal()
-    if #vim.fn.argv() == 0 then
-      -- Expand path to the "whereami" file (this file is set in your zshrc)
-      local file_path = vim.fn.expand("~/.local/state/zsh/whereami")
-      local lines = vim.fn.readfile(file_path)
-      if lines and #lines > 0 then
-        local new_dir = lines[1]
-        vim.api.nvim_set_current_dir(new_dir)
+  --- Returns the first non-floating "main" window in the current tab whose
+  --- buffer is a normal editable buffer (not lazy, not a floating popup, not a
+  --- special buftype). Returns nil if none found.
+  local function find_main_window()
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      local cfg = vim.api.nvim_win_get_config(win)
+      if cfg.relative == "" or cfg.relative == nil then
+        local buf = vim.api.nvim_win_get_buf(win)
+        local ft = vim.bo[buf].filetype
+        local bt = vim.bo[buf].buftype
+        if bt == "" and ft ~= "lazy" then
+          return win
+        end
       end
-      -- Disable list mode locally and open a terminal buffer
+    end
+    return nil
+  end
+
+  local function call_terminal()
+    if #vim.fn.argv() ~= 0 then return end
+
+    local main_win = find_main_window()
+    if not main_win then
+      -- No suitable window yet (e.g. lazy popup is the only visible window).
+      -- Retry once lazy has closed and a normal window exists.
+      vim.defer_fn(call_terminal, 100)
+      return
+    end
+
+    -- Remember the originally-focused window so we can restore focus to it
+    -- (e.g. the lazy.nvim floating popup) after setting up the terminal.
+    local origin_win = vim.api.nvim_get_current_win()
+
+    vim.api.nvim_win_call(main_win, function()
+      local file_path = vim.fn.expand("~/.local/state/zsh/whereami")
+      local ok, lines = pcall(vim.fn.readfile, file_path)
+      if ok and lines and #lines > 0 then
+        vim.api.nvim_set_current_dir(lines[1])
+      end
       vim.opt_local.list = false
       vim.cmd("terminal")
       vim.opt_local.number = false
       vim.opt_local.relativenumber = false
-      vim.cmd("norm a") -- Enter insert mode in the terminal.
       local term_buf = vim.api.nvim_get_current_buf()
-      -- Mark this terminal as the main terminal for later reference.
       vim.api.nvim_buf_set_var(term_buf, "is_main_terminal", true)
+    end)
+
+    -- Restore focus to the origin window if it's still valid.
+    if origin_win ~= main_win and vim.api.nvim_win_is_valid(origin_win) then
+      vim.api.nvim_set_current_win(origin_win)
     end
   end
 
